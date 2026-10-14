@@ -1,0 +1,5 @@
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/crowdfunding}
+    username: ${DB_USER:crowdfunding}
+    password: ${DB_PASSWORD:crowdfunding}
