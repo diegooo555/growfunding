@@ -1,0 +1,26 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: gateway
+  cloud:
+    gateway:
+      server:
+        webflux:
+          # The frontend only knows the gateway; the gateway knows where each service lives.
+          routes:
+            - id: stats-route
+              uri: ${STATS_SERVICE_URL:http://localhost:8082}
+              predicates:
+                - Path=/api/stats/**
+            - id: core-route
+              uri: ${CORE_SERVICE_URL:http://localhost:8081}
+              predicates:
+                - Path=/api/**
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,gateway
