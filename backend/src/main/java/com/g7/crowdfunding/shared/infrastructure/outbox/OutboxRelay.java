@@ -4,6 +4,9 @@ import com.g7.crowdfunding.shared.application.port.out.ClockPort;
 import com.g7.crowdfunding.shared.domain.event.DomainEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Component;
@@ -32,10 +35,12 @@ public class OutboxRelay {
     private final TransactionTemplate tx;
     private final int batchSize;
     private final int maxAttempts;
+    private final Counter dispatchedCounter;
+    private final Counter failedCounter;
 
     public OutboxRelay(OutboxEventJpaRepository repository, DomainEventSerializer serializer,
                        DomainEventDispatcher dispatcher, ClockPort clock,
-                       PlatformTransactionManager transactionManager,
+                       PlatformTransactionManager transactionManager, MeterRegistry meters,
                        @Value("${crowdfunding.outbox.batch-size:50}") int batchSize,
                        @Value("${crowdfunding.outbox.max-attempts:10}") int maxAttempts) {
         this.repository = repository;
@@ -46,6 +51,10 @@ public class OutboxRelay {
         this.tx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         this.batchSize = batchSize;
         this.maxAttempts = maxAttempts;
+        this.dispatchedCounter = Counter.builder("crowdfunding.outbox.dispatched")
+                .description("Outbox events delivered to their handlers").register(meters);
+        this.failedCounter = Counter.builder("crowdfunding.outbox.failed")
+                .description("Outbox dispatch attempts that failed and will be retried").register(meters);
     }
 
     /**
@@ -71,13 +80,22 @@ public class OutboxRelay {
                     return false;
                 }
                 DomainEvent event = serializer.deserialize(entry.getEventType(), entry.getPayload());
-                dispatcher.dispatch(event);
+                // Handlers log with the id of the request that produced the event.
+                try (MDC.MDCCloseable ignored = MDC.putCloseable("correlationId",
+                        entry.getCorrelationId() == null ? "" : entry.getCorrelationId())) {
+                    dispatcher.dispatch(event);
+                    LOG.info("Outbox: {} {} dispatched", entry.getEventType(), id);
+                }
                 entry.markProcessed(clock.now());
                 return true;
             });
+            if (Boolean.TRUE.equals(done)) {
+                dispatchedCounter.increment();
+            }
             return Boolean.TRUE.equals(done);
         } catch (RuntimeException e) {
             LOG.warn("Outbox event {} could not be dispatched, it will be retried: {}", id, e.toString());
+            failedCounter.increment();
             recordFailure(id, e);
             return false;
         }
