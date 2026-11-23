@@ -33,12 +33,13 @@ public class OutboxEventJpaEntity {
     private String lastError;
     private Instant processedAt;
     private Instant createdAt;
+    private String correlationId;
 
     protected OutboxEventJpaEntity() {
     }
 
     public OutboxEventJpaEntity(UUID id, String eventType, UUID aggregateId, String payload, Instant occurredAt,
-                                Instant now) {
+                                Instant now, String correlationId) {
         this.id = id;
         this.eventType = eventType;
         this.aggregateId = aggregateId;
@@ -48,6 +49,7 @@ public class OutboxEventJpaEntity {
         this.attempts = 0;
         this.nextAttemptAt = now;
         this.createdAt = now;
+        this.correlationId = correlationId;
     }
 
     public void markProcessed(Instant now) {
@@ -87,6 +89,10 @@ public class OutboxEventJpaEntity {
 
     public int getAttempts() {
         return attempts;
+    }
+
+    public String getCorrelationId() {
+        return correlationId;
     }
 
     public String getLastError() {

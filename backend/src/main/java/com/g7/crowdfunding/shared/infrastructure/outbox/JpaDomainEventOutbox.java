@@ -3,6 +3,7 @@ package com.g7.crowdfunding.shared.infrastructure.outbox;
 import com.g7.crowdfunding.shared.application.port.out.ClockPort;
 import com.g7.crowdfunding.shared.application.port.out.DomainEventOutbox;
 import com.g7.crowdfunding.shared.domain.event.DomainEvent;
+import org.slf4j.MDC;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 
@@ -32,8 +33,10 @@ public class JpaDomainEventOutbox implements DomainEventOutbox {
         if (events.isEmpty()) {
             return;
         }
+        // The id of the request that caused the events travels with them (null for scheduled jobs).
+        String correlationId = MDC.get("correlationId");
         events.forEach(event -> repository.save(new OutboxEventJpaEntity(event.eventId(), event.eventType(),
-                event.aggregateId(), serializer.serialize(event), event.occurredAt(), clock.now())));
+                event.aggregateId(), serializer.serialize(event), event.occurredAt(), clock.now(), correlationId)));
         publisher.publishEvent(new OutboxEventsAppended(events.size()));
     }
 }
