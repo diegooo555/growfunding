@@ -317,3 +317,62 @@ Pages are containers: they inject stores and pass signals down. `ui/` components
 - There is no real authentication. Identity is simulated with the `X-User-Id` header.
 - The outbox relay assumes a single application instance. A multi-instance deployment would need `SELECT … FOR UPDATE SKIP LOCKED` or a leader lock.
 - Delivery is at-least-once. If the external channel fails after sending to some recipients, those recipients may get the message again on retry. In-app notifications are rolled back with the batch, so they are never duplicated.
+
+## Microservicios y observabilidad
+
+| Servicio | Puerto | Persistencia | Rol |
+|---|---|---|---|
+| `backend` (core) | 8081 | PostgreSQL / H2 | Campañas, aportes, usuarios y notificaciones. Escribe sus eventos de dominio en un Outbox transaccional |
+| `gateway` | 8080 | — | Punto de entrada único: `/api/stats/**` → stats-service, resto de `/api/**` → backend |
+| `stats-service` | 8082 | H2 propia (`stats-service/data`) | Estadísticas por campaña (lado de lectura, CQRS) alimentadas por Kafka |
+| `kafka` | 9092 | — | Bróker de eventos (`crowdfunding.domain-events`) |
+
+**Comunicación asíncrona:** el `OutboxRelay` del core, además de despachar a los handlers locales, reenvía cada
+evento de dominio a Kafka (`KafkaDomainEventForwarder`, activo con `KAFKA_EVENTS_ENABLED=true`). Si Kafka cae,
+el relay reintenta con backoff y no se pierde nada. `stats-service` es un consumidor idempotente: aplica cada
+evento solo la primera vez que ve su `eventId`.
+
+**Observabilidad:**
+- `/actuator/health` y `/actuator/metrics` en ambos servicios; métricas propias `crowdfunding.outbox.dispatched`
+  y `crowdfunding.outbox.failed`.
+- Cada petición recibe un `X-Correlation-Id` (se respeta el del cliente o se genera) que queda en cada línea de
+  log como `[servicio,id]`, se guarda con el evento en el Outbox y viaja en la cabecera del mensaje de Kafka hasta
+  `stats-service`.
+
+### Cómo correrlo
+
+Cada comando en su propia terminal, desde la raíz del repositorio:
+
+```bash
+docker compose up -d kafka
+```
+
+```bash
+cd backend && KAFKA_EVENTS_ENABLED=true ./mvnw spring-boot:run
+```
+
+```bash
+cd stats-service && ./mvnw spring-boot:run
+```
+
+```bash
+cd gateway && ./mvnw spring-boot:run
+```
+
+Todo se consulta por el gateway en `http://localhost:8080`. Arquitectura y decisiones: [ARQUITECTURA.md](ARQUITECTURA.md)
+y [docs/](docs/).
+
+Prueba (cruza dos servicios):
+
+```bash
+curl http://localhost:8080/api/campaigns
+```
+
+Copia el `id` de una campaña y aporta con un id de correlación propio:
+
+```bash
+curl -X POST http://localhost:8080/api/campaigns/<campaignId>/contributions -H 'Content-Type: application/json' -H 'X-User-Id: 33333333-3333-3333-3333-333333333333' -H 'X-Correlation-Id: demo-001' -d '{"amount":100,"currency":"USD","anonymous":false,"idempotencyKey":"5f1c2e9a-0b7d-4c1e-9a3f-2d6b8e4c7a10"}'
+```
+
+Usa la moneda de la campaña. Luego consulta `GET http://localhost:8080/api/stats/campaigns/<campaignId>` y busca
+`demo-001` en los logs del backend y de stats-service.
