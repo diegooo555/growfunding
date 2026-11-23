@@ -16,12 +16,14 @@ spring:
   mvc:
     problemdetails:
       enabled: true
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
   jackson:
     serialization:
       write-dates-as-timestamps: false
 
 server:
-  port: ${SERVER_PORT:8081}
+  port: 8081
 
 springdoc:
   swagger-ui:
@@ -31,7 +33,10 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
 
 crowdfunding:
   cors:
@@ -50,6 +55,12 @@ crowdfunding:
     relay-delay-ms: 5000
     batch-size: 50
     max-attempts: 10
+  events:
+    kafka:
+      # When enabled, the outbox relay also forwards every domain event to Kafka so other
+      # services (stats-service) can react. Off by default so dev and tests need no broker.
+      enabled: ${KAFKA_EVENTS_ENABLED:false}
+      topic: crowdfunding.domain-events
   notifications:
     # Probability (0.0-1.0) that the logging channel fails, to demonstrate outbox retries.
     simulated-failure-rate: 0.0
@@ -57,5 +68,8 @@ crowdfunding:
     enabled: true
 
 logging:
+  pattern:
+    # Every log line carries the service name and the request correlation id
+    level: "%5p [${spring.application.name},%X{correlationId:-}]"
   level:
     com.g7.crowdfunding: INFO
